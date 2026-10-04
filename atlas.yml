@@ -1,0 +1,18 @@
+name: Update RepoAtlas
+on:
+  push: { branches: [main] }
+  schedule: [{ cron: "0 3 * * 1" }]
+permissions: { contents: write }
+jobs:
+  atlas:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with: { fetch-depth: 0 }
+      - uses: actions/setup-python@v5
+        with: { python-version: "3.12" }
+      - run: pip install repoatlas
+      - run: mkdir -p docs && repoatlas . -o docs/atlas.html
+      - run: |
+          git config user.name "repoatlas-bot" && git config user.email "bot@users.noreply.github.com"
+          git add docs/atlas.html && (git diff --cached --quiet || git commit -m "chore: update atlas" && git push)

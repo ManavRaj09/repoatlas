@@ -1,0 +1,19 @@
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "repoatlas"
+version = "0.1.0"
+description = "Turn any git repo's history into a procedurally generated fantasy world map."
+readme = "README.md"
+requires-python = ">=3.8"
+license = { text = "MIT" }
+keywords = ["git", "visualization", "procedural-generation", "developer-tools"]
+dependencies = []
+
+[project.scripts]
+repoatlas = "repoatlas.cli:main"
+
+[tool.setuptools.package-data]
+repoatlas = ["template.html"]

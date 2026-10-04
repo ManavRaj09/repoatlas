@@ -1,0 +1,112 @@
+<!doctype html><html lang="en"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>RepoAtlas</title>
+<style>
+html,body{margin:0;height:100%;background:#0c1622;color:#e8dcc0;font-family:Georgia,serif;overflow:hidden}
+canvas{display:block;cursor:grab}canvas:active{cursor:grabbing}
+#bar{position:fixed;left:0;right:0;bottom:0;display:flex;gap:12px;align-items:center;padding:10px 16px;background:#0c1622ee;border-top:1px solid #3a4a5e}
+#bar input{flex:1}button{background:#2b3a4e;color:#e8dcc0;border:1px solid #55677d;padding:6px 12px;border-radius:6px;cursor:pointer;font-family:inherit}
+#tip{position:fixed;pointer-events:none;background:#1a2433f2;border:1px solid #c9a24a;padding:8px 10px;border-radius:6px;font-size:13px;display:none;max-width:280px;line-height:1.4}
+#title{position:fixed;top:12px;left:16px;font-size:22px;text-shadow:0 2px 6px #000}#title small{display:block;font-size:12px;opacity:.7}
+#legend{position:fixed;top:12px;right:16px;font-size:12px;opacity:.8;text-align:right;line-height:1.6}
+</style></head><body>
+<canvas id="c"></canvas><div id="title"></div>
+<div id="legend">● city = file (size = lines) &nbsp; ✦ glowing = active<br>⚔ bug-fix battles &nbsp; ⛈ storm = heavy churn<br>▒ fog = untouched 18+ months &nbsp; ▲ ruins = deleted<br>═ golden bridge = regions changed together</div>
+<div id="tip"></div>
+<div id="bar"><button id="play">▶ Replay history</button><input id="t" type="range" min="0" max="1000" value="1000"><span id="date"></span><button id="png">⬇ PNG</button></div>
+<script>
+const D=__DATA__;
+const W=1200,H=800,CS=5,DAY=86400;
+const seed=parseInt(D.seed.slice(0,8),16)||1;
+const rng=(s=>()=>{s|=0;s=s+0x6D2B79F5|0;let t=Math.imul(s^s>>>15,1|s);t=t+Math.imul(t^t>>>7,61|t)^t;return((t^t>>>14)>>>0)/4294967296})(seed);
+function hash(a,b){let n=Math.imul(a*374761393+b*668265263+seed|0,1274126177);n=Math.imul(n^n>>>13,1274126177);return((n^n>>>16)>>>0)/4294967296}
+const sm=t=>t*t*(3-2*t);
+function vnoise(x,y){const xi=Math.floor(x),yi=Math.floor(y),xf=sm(x-xi),yf=sm(y-yi);
+ const a=hash(xi,yi),b=hash(xi+1,yi),c=hash(xi,yi+1),d=hash(xi+1,yi+1);
+ const top=a+(b-a)*xf,bot=c+(d-c)*xf;return top+(bot-top)*yf}
+const fbm=(x,y)=>vnoise(x,y)*.55+vnoise(x*2.1,y*2.1)*.3+vnoise(x*4.3,y*4.3)*.15;
+const hue=i=>(i*137.5+20)%360;
+
+// ---- regions ----
+const names=[...new Set(D.files.map(f=>f.r))];
+const R=names.map((n,i)=>{const fs=D.files.filter(f=>f.r===n);
+ const w=Math.sqrt(fs.reduce((s,f)=>s+f.loc+40*f.c,0)+200);
+ const au=new Array(D.authors.length+1).fill(0);fs.forEach(f=>au[f.a]+=f.c);
+ return{n,fs,w,dom:au.indexOf(Math.max(...au)),x:0,y:0,cells:[]}});
+R.forEach(r=>{let best;for(let k=0;k<60;k++){const a=rng()*6.28,d=Math.sqrt(rng())*.62;
+ const p={x:W/2+Math.cos(a)*d*W/2,y:H/2+Math.sin(a)*d*H/2};
+ const m=Math.min(...R.filter(o=>o.placed).map(o=>Math.hypot(o.x-p.x,o.y-p.y)/(o.w+r.w)),9);
+ if(!best||m>best.m)best={...p,m}}r.x=best.x;r.y=best.y;r.placed=1});
+
+// ---- terrain ----
+const gw=W/CS,gh=H/CS,grid=new Int16Array(gw*gh).fill(-1),elev=new Float32Array(gw*gh);
+const tc=document.createElement('canvas');tc.width=gw;tc.height=gh;const tx=tc.getContext('2d'),img=tx.createImageData(gw,gh);
+for(let gy=0;gy<gh;gy++)for(let gx=0;gx<gw;gx++){
+ const px=gx*CS,py=gy*CS,i=gy*gw+gx;
+ const dx=(px-W/2)/(W*.5),dy=(py-H/2)/(H*.5),d=Math.hypot(dx,dy);
+ const e=1.05-Math.pow(d,1.7)+(fbm(px/110,py/110)-.5)*.75;elev[i]=e;
+ if(e>.28){const wx=px+(vnoise(px/45,py/45)-.5)*70,wy=py+(vnoise(py/45+9,px/45)-.5)*70;
+  let b=0,bc=1e9;R.forEach((r,k)=>{const c=Math.hypot(wx-r.x,wy-r.y)/r.w;if(c<bc){bc=c;b=k}});
+  grid[i]=b;R[b].cells.push([px,py])}}
+for(let i=0;i<gw*gh;i++){const o=i*4,r=grid[i];let c;
+ if(r<0){const e=elev[i];c=[18+e*30,50+e*60,85+e*60];if(e>.2)c=[70,120,150]}
+ else{const rg=R[r],h=hue(rg.dom)/360,e=elev[i],l=.28+Math.min(.35,(e-.28)*.7);
+  c=hsl(h,.38,l);const edge=(grid[i+1]!==r)||(grid[i+gw]!==r)||(grid[i-1]!==r)||(grid[i-gw]!==r);
+  if(edge)c=c.map(v=>v*.55);else if(e>.75)c=[235,235,240]}
+ img.data.set([c[0],c[1],c[2],255],o)}
+tx.putImageData(img,0,0);
+function hsl(h,s,l){const f=n=>{const k=(n+h*12)%12,a=s*Math.min(l,1-l);return 255*(l-a*Math.max(-1,Math.min(k-3,9-k,1)))};return[f(0),f(8),f(4)]}
+
+// ---- cities ----
+const now=D.now,cities=[];
+R.forEach(r=>{const land=r.cells.length?r.cells:[[r.x,r.y]];r.cx=land.reduce((s,c)=>s+c[0],0)/land.length;r.cy=land.reduce((s,c)=>s+c[1],0)/land.length;
+ const placed=[];[...r.fs].sort((a,b)=>b.loc-a.loc).forEach(f=>{let p;
+  for(let k=0;k<40;k++){const c=land[Math.floor(rng()*land.length)];const q={x:c[0]+rng()*CS,y:c[1]+rng()*CS};
+   if(placed.every(o=>Math.hypot(o.x-q.x,o.y-q.y)>16)){p=q;break}p=p||q}
+  const r_=f.dead?5:3+Math.min(9,Math.sqrt(f.loc)/5);
+  const o={...p,f,rad:r_,reg:r,road:placed.length?placed.reduce((b,o)=>Math.hypot(o.x-p.x,o.y-p.y)<Math.hypot(b.x-p.x,b.y-p.y)?o:b):null};
+  placed.push(o);cities.push(o)})});
+const churnCut=[...D.files].map(f=>f.c).sort((a,b)=>b-a)[Math.max(0,Math.floor(D.files.length*.08))]||99;
+
+// ---- view ----
+const cv=document.getElementById('c'),ctx=cv.getContext('2d');let v={x:0,y:0,k:1},T=D.now;
+function fit(){cv.width=innerWidth;cv.height=innerHeight;const k=Math.min(cv.width/W,(cv.height-50)/H);v={k,x:(cv.width-W*k)/2,y:(cv.height-50-H*k)/2};draw()}
+const ago=t=>{const d=Math.round((now-t)/DAY);return d<1?'today':d<60?d+' days ago':d<700?Math.round(d/30)+' months ago':(d/365).toFixed(1)+' years ago'};
+function draw(){ctx.setTransform(1,0,0,1,0,0);ctx.fillStyle='#0c1622';ctx.fillRect(0,0,cv.width,cv.height);
+ ctx.setTransform(v.k,0,0,v.k,v.x,v.y);ctx.imageSmoothingEnabled=true;ctx.drawImage(tc,0,0,W,H);
+ const vis=cities.filter(c=>c.f.first<=T);
+ ctx.strokeStyle='#6b4a2a';ctx.lineWidth=1.2;vis.forEach(c=>{if(c.road&&c.road.f.first<=T){ctx.beginPath();ctx.moveTo(c.x,c.y);ctx.lineTo(c.road.x,c.road.y);ctx.stroke()}});
+ ctx.setLineDash([6,4]);ctx.strokeStyle='#e0b84a';ctx.lineWidth=3;ctx.font='11px Georgia';
+ D.bridges.slice(0,5).forEach(([a,b,n])=>{const A=R.find(r=>r.n===a),B=R.find(r=>r.n===b);if(A&&B){ctx.beginPath();ctx.moveTo(A.cx,A.cy);ctx.lineTo(B.cx,B.cy);ctx.stroke()}});ctx.setLineDash([]);
+ vis.forEach(c=>{const f=c.f,old=(now-f.last)>540*DAY;
+  if(f.dead){ctx.fillStyle='#8a8478';ctx.beginPath();ctx.moveTo(c.x-5,c.y+4);ctx.lineTo(c.x-2,c.y-4);ctx.lineTo(c.x+1,c.y);ctx.lineTo(c.x+5,c.y+4);ctx.fill();return}
+  if((now-f.last)<90*DAY){ctx.shadowColor='#ffd76a';ctx.shadowBlur=14}
+  ctx.fillStyle=old?'#b7b0a0':'#f6e6b4';ctx.strokeStyle='#2a1d10';ctx.lineWidth=1;ctx.beginPath();ctx.arc(c.x,c.y,c.rad,0,6.3);ctx.fill();ctx.stroke();ctx.shadowBlur=0;
+  if(old){const g=ctx.createRadialGradient(c.x,c.y,2,c.x,c.y,26);g.addColorStop(0,'rgba(220,225,235,.55)');g.addColorStop(1,'rgba(220,225,235,0)');ctx.fillStyle=g;ctx.beginPath();ctx.arc(c.x,c.y,26,0,6.3);ctx.fill()}
+  ctx.font='12px serif';ctx.textAlign='center';
+  if(f.fix>=3)ctx.fillText('⚔',c.x+c.rad+6,c.y+4);
+  if(f.c>=churnCut&&f.c>3)ctx.fillText('⛈',c.x,c.y-c.rad-5)});
+ ctx.textAlign='center';R.forEach(r=>{const t=r.n==='(root)'?'The Capital':r.n==='(misc)'?'The Borderlands':'Kingdom of '+r.n.replace(/\/$/,'');
+  ctx.font='bold 15px Georgia';ctx.lineWidth=4;ctx.strokeStyle='#0c1622cc';ctx.strokeText(t,r.cx,r.cy-r.fs.length**.5*3-14);ctx.fillStyle='#f3e6c4';ctx.fillText(t,r.cx,r.cy-r.fs.length**.5*3-14)});
+ document.getElementById('date').textContent=new Date(T*1000).toISOString().slice(0,10)}
+document.getElementById('title').innerHTML=`${D.name}<small>${D.stats.commits} commits · ${D.stats.files} files · ${D.authors.length} factions</small>`;
+
+// ---- interaction ----
+const tip=document.getElementById('tip');let drag=null;
+const world=(e)=>({x:(e.offsetX-v.x)/v.k,y:(e.offsetY-v.y)/v.k});
+cv.onmousedown=e=>drag={x:e.clientX-v.x,y:e.clientY-v.y};onmouseup=()=>drag=null;
+cv.onmousemove=e=>{if(drag){v.x=e.clientX-drag.x;v.y=e.clientY-drag.y;draw();return}
+ const w=world(e);const c=cities.filter(c=>c.f.first<=T).find(c=>Math.hypot(c.x-w.x,c.y-w.y)<c.rad+4);
+ if(!c){tip.style.display='none';return}const f=c.f;
+ tip.innerHTML=`<b>${f.p}</b>${f.dead?' <i>(ruins)</i>':''}<br>${f.c} commits · ${f.loc} lines<br>last touched ${ago(f.last)}<br>faction: ${D.authors[f.a]||'others'}${f.fix?`<br>⚔ ${f.fix} bug-fix battles`:''}`;
+ tip.style.display='block';tip.style.left=e.clientX+14+'px';tip.style.top=e.clientY+14+'px'};
+cv.onwheel=e=>{e.preventDefault();const z=e.deltaY<0?1.15:1/1.15,k=Math.max(.4,Math.min(8,v.k*z));
+ v.x=e.offsetX-(e.offsetX-v.x)*k/v.k;v.y=e.offsetY-(e.offsetY-v.y)*k/v.k;v.k=k;draw()};
+const sl=document.getElementById('t'),span=D.now-D.start||1;
+sl.oninput=()=>{T=D.start+span*sl.value/1000;draw()};
+let timer;document.getElementById('play').onclick=()=>{clearInterval(timer);sl.value=0;timer=setInterval(()=>{sl.value=+sl.value+8;sl.oninput();if(sl.value>=1000)clearInterval(timer)},40)};
+document.getElementById('png').onclick=()=>{const o=document.createElement('canvas');o.width=W*2;o.height=H*2;const s=o.getContext('2d'),sv=[ctx,v];
+ const c2=o.getContext('2d');cv.width=W*2;cv.height=H*2;v={k:2,x:0,y:0};draw();const url=cv.toDataURL('image/png');
+ const a=document.createElement('a');a.href=url;a.download=D.name+'-atlas.png';a.click();fit()};
+onresize=fit;fit();
+</script></body></html>
